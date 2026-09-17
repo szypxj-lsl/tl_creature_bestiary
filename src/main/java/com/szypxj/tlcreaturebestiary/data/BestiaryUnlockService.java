@@ -1,6 +1,7 @@
 package com.szypxj.tlcreaturebestiary.data;
 
 import com.szypxj.tlcreaturebestiary.network.BestiaryNetwork;
+import com.szypxj.tldomesticatemorecreatures.api.creature.CreatureInfoApi;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.Entity;
@@ -16,9 +17,10 @@ public final class BestiaryUnlockService {
         if (player == null || entity == null || entity.level().isClientSide()) {
             return false;
         }
-        if (!(entity instanceof LivingEntity) || entity instanceof Player) {
+        if (!(entity instanceof LivingEntity living) || entity instanceof Player) {
             return false;
         }
+        CreatureInfoApi.getDangerRatingStats(living);
         ResourceLocation id = ForgeRegistries.ENTITY_TYPES.getKey(entity.getType());
         return tryUnlock(player, id);
     }

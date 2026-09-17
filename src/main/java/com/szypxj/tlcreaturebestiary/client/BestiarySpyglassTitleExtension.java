@@ -22,7 +22,18 @@ public final class BestiarySpyglassTitleExtension implements SpyglassTitleExtens
         if (!isValid(context)) {
             return;
         }
-        DangerStarRenderer.draw(graphics, font, x, y, DangerRating.fromBaseStats(context.baseStats()));
+        DangerStarRenderer.draw(
+                graphics,
+                font,
+                x,
+                y,
+                DangerRating.fromRadarScores(
+                        context.radarPower(),
+                        context.radarLife(),
+                        context.radarSpeed(),
+                        context.elite()
+                )
+        );
     }
 
     private static boolean isValid(SpyglassTitleContext context) {

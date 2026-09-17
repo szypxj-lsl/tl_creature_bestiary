@@ -39,7 +39,7 @@ public record C2SBestiaryDetailRequest(ResourceLocation entityTypeId) {
             if (type == null || type == EntityType.PLAYER) {
                 return;
             }
-            BaseStats stats = CreatureInfoApi.getBaseStats(type);
+            BaseStats stats = CreatureInfoApi.getDangerRatingStats(type);
             TamingInfo taming = CreatureInfoApi.getTamingInfo(sender.serverLevel(), type);
             boolean rideable = CreatureInfoApi.isRideable(sender.serverLevel(), type);
             List<DropInfo> drops = LootInfoService.describe(sender.serverLevel().getServer(), type);

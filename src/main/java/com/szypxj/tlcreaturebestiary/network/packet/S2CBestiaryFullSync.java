@@ -1,6 +1,7 @@
 package com.szypxj.tlcreaturebestiary.network.packet;
 
 import com.szypxj.tlcreaturebestiary.client.ClientBestiaryState;
+import com.szypxj.tldomesticatemorecreatures.api.creature.CreatureInfoApi;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraftforge.network.NetworkEvent;
@@ -36,7 +37,10 @@ public record S2CBestiaryFullSync(Set<ResourceLocation> unlocked) {
         NetworkEvent.Context context = contextSupplier.get();
         context.enqueueWork(() -> DistExecutor.unsafeRunWhenOn(
                 Dist.CLIENT,
-                () -> () -> ClientBestiaryState.replace(packet.unlocked())
+                () -> () -> {
+                    CreatureInfoApi.refreshDangerRatingData();
+                    ClientBestiaryState.replace(packet.unlocked());
+                }
         ));
         context.setPacketHandled(true);
     }

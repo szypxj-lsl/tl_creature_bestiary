@@ -31,5 +31,6 @@
   "gui.tl_creature_bestiary.drop_flag_player": "需玩家击杀",
   "gui.tl_creature_bestiary.drop_flag_looting": "受抢夺影响",
   "gui.tl_creature_bestiary.drop_flags_player_looting": "需玩家击杀 · 受抢夺影响",
-  "gui.tl_creature_bestiary.rideable": "可骑乘"
+  "gui.tl_creature_bestiary.rideable": "可骑乘",
+  "command.tl_creature_bestiary.danger_refresh.success": "§b已重新计算生物危险星级。"
 }
