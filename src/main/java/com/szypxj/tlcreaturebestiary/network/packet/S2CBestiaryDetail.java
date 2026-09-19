@@ -1,5 +1,10 @@
 package com.szypxj.tlcreaturebestiary.network.packet;
 
+import com.szypxj.tlcreaturebestiary.api.profile.BestiaryDiet;
+import com.szypxj.tlcreaturebestiary.api.profile.BestiaryProfile;
+import com.szypxj.tlcreaturebestiary.api.profile.BestiaryProfileConfidence;
+import com.szypxj.tlcreaturebestiary.api.profile.BestiaryProfileField;
+import com.szypxj.tlcreaturebestiary.api.profile.BestiaryProfileSource;
 import com.szypxj.tlcreaturebestiary.client.ClientBestiaryState;
 import com.szypxj.tlcreaturebestiary.info.DropInfo;
 import com.szypxj.tldomesticatemorecreatures.api.creature.BaseStats;
@@ -7,6 +12,7 @@ import com.szypxj.tldomesticatemorecreatures.api.creature.BaseStatsSource;
 import com.szypxj.tldomesticatemorecreatures.api.creature.TamingFoodInfo;
 import com.szypxj.tldomesticatemorecreatures.api.creature.TamingInfo;
 import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.fml.DistExecutor;
@@ -22,7 +28,8 @@ public record S2CBestiaryDetail(
         TamingInfo tamingInfo,
         boolean rideable,
         List<DropInfo> drops,
-        List<ResourceLocation> biomeIds
+        List<ResourceLocation> biomeIds,
+        BestiaryProfile profile
 ) {
     private static final int MAX_DROPS = 128;
     private static final int MAX_BIOMES = 1024;
@@ -32,6 +39,7 @@ public record S2CBestiaryDetail(
         tamingInfo = tamingInfo == null ? TamingInfo.NOT_TAMEABLE : tamingInfo;
         drops = drops == null ? List.of() : List.copyOf(drops.stream().limit(MAX_DROPS).toList());
         biomeIds = biomeIds == null ? List.of() : List.copyOf(biomeIds.stream().limit(MAX_BIOMES).toList());
+        profile = profile == null ? BestiaryProfile.unavailable() : profile;
     }
 
     public static void encode(S2CBestiaryDetail packet, FriendlyByteBuf buffer) {
@@ -66,6 +74,7 @@ public record S2CBestiaryDetail(
         for (ResourceLocation biomeId : packet.biomeIds()) {
             buffer.writeResourceLocation(biomeId);
         }
+        encodeProfile(buffer, packet.profile());
     }
 
     public static S2CBestiaryDetail decode(FriendlyByteBuf buffer) {
@@ -107,13 +116,15 @@ public record S2CBestiaryDetail(
         for (int i = 0; i < biomeCount; i++) {
             biomeIds.add(buffer.readResourceLocation());
         }
+        BestiaryProfile profile = decodeProfile(buffer);
         return new S2CBestiaryDetail(
                 id,
                 stats,
                 new TamingInfo(tameable, method, requiredLevel, foods),
                 rideable,
                 drops,
-                biomeIds
+                biomeIds,
+                profile
         );
     }
 
@@ -127,9 +138,44 @@ public record S2CBestiaryDetail(
                         packet.tamingInfo(),
                         packet.rideable(),
                         packet.drops(),
-                        packet.biomeIds()
+                        packet.biomeIds(),
+                        packet.profile()
                 )
         ));
         context.setPacketHandled(true);
+    }
+
+    private static void encodeProfile(FriendlyByteBuf buffer, BestiaryProfile profile) {
+        writeComponentField(buffer, profile.species());
+        BestiaryProfileField<BestiaryDiet> diet = profile.diet();
+        buffer.writeEnum(diet.value());
+        buffer.writeEnum(diet.source());
+        buffer.writeEnum(diet.confidence());
+        writeComponentField(buffer, profile.description());
+    }
+
+    private static BestiaryProfile decodeProfile(FriendlyByteBuf buffer) {
+        BestiaryProfileField<Component> species = readComponentField(buffer);
+        BestiaryProfileField<BestiaryDiet> diet = new BestiaryProfileField<>(
+                buffer.readEnum(BestiaryDiet.class),
+                buffer.readEnum(BestiaryProfileSource.class),
+                buffer.readEnum(BestiaryProfileConfidence.class)
+        );
+        BestiaryProfileField<Component> description = readComponentField(buffer);
+        return new BestiaryProfile(species, diet, description);
+    }
+
+    private static void writeComponentField(FriendlyByteBuf buffer, BestiaryProfileField<Component> field) {
+        buffer.writeComponent(field.value());
+        buffer.writeEnum(field.source());
+        buffer.writeEnum(field.confidence());
+    }
+
+    private static BestiaryProfileField<Component> readComponentField(FriendlyByteBuf buffer) {
+        return new BestiaryProfileField<>(
+                buffer.readComponent(),
+                buffer.readEnum(BestiaryProfileSource.class),
+                buffer.readEnum(BestiaryProfileConfidence.class)
+        );
     }
 }

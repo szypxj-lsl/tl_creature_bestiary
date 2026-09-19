@@ -1,5 +1,7 @@
 package com.szypxj.tlcreaturebestiary.client;
 
+import com.szypxj.tlcreaturebestiary.api.profile.BestiaryProfile;
+import com.szypxj.tlcreaturebestiary.data.BestiaryEntryProgress;
 import com.szypxj.tlcreaturebestiary.info.DropInfo;
 import com.szypxj.tldomesticatemorecreatures.api.creature.BaseStats;
 import com.szypxj.tldomesticatemorecreatures.api.creature.TamingInfo;
@@ -15,6 +17,7 @@ import java.util.Set;
 public final class ClientBestiaryState {
     private static final Set<ResourceLocation> UNLOCKED = new LinkedHashSet<>();
     private static final Map<ResourceLocation, Detail> DETAILS = new LinkedHashMap<>();
+    private static final Map<ResourceLocation, BestiaryEntryProgress> INVESTIGATION = new LinkedHashMap<>();
 
     private ClientBestiaryState() {
     }
@@ -22,6 +25,7 @@ public final class ClientBestiaryState {
     public static synchronized void replace(Set<ResourceLocation> ids) {
         UNLOCKED.clear();
         DETAILS.clear();
+        INVESTIGATION.clear();
         if (ids != null) {
             UNLOCKED.addAll(ids);
         }
@@ -42,6 +46,23 @@ public final class ClientBestiaryState {
     public static synchronized void clear() {
         UNLOCKED.clear();
         clearDetails();
+        INVESTIGATION.clear();
+    }
+
+    public static synchronized void putProgress(ResourceLocation id, BestiaryEntryProgress progress) {
+        if (id != null && progress != null) {
+            INVESTIGATION.put(id, progress);
+        }
+    }
+
+    public static synchronized BestiaryEntryProgress progress(ResourceLocation id) {
+        return id == null ? BestiaryEntryProgress.empty() : INVESTIGATION.getOrDefault(id, BestiaryEntryProgress.empty());
+    }
+
+    public static synchronized void removeProgress(ResourceLocation id) {
+        if (id != null) {
+            INVESTIGATION.remove(id);
+        }
     }
 
     public static synchronized void putDetail(
@@ -50,7 +71,8 @@ public final class ClientBestiaryState {
             TamingInfo taming,
             boolean rideable,
             List<DropInfo> drops,
-            List<ResourceLocation> biomeIds
+            List<ResourceLocation> biomeIds,
+            BestiaryProfile profile
     ) {
         if (id != null) {
             DETAILS.put(id, new Detail(
@@ -58,7 +80,8 @@ public final class ClientBestiaryState {
                     taming == null ? TamingInfo.NOT_TAMEABLE : taming,
                     rideable,
                     drops == null ? List.of() : List.copyOf(drops),
-                    biomeIds == null ? List.of() : List.copyOf(biomeIds)
+                    biomeIds == null ? List.of() : List.copyOf(biomeIds),
+                    profile == null ? BestiaryProfile.unavailable() : profile
             ));
         }
     }
@@ -82,11 +105,13 @@ public final class ClientBestiaryState {
             TamingInfo tamingInfo,
             boolean rideable,
             List<DropInfo> drops,
-            List<ResourceLocation> biomeIds
+            List<ResourceLocation> biomeIds,
+            BestiaryProfile profile
     ) {
         public Detail {
             drops = drops == null ? List.of() : List.copyOf(drops);
             biomeIds = biomeIds == null ? List.of() : List.copyOf(biomeIds);
+            profile = profile == null ? BestiaryProfile.unavailable() : profile;
         }
     }
 }

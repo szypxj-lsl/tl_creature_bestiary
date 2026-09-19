@@ -21,6 +21,9 @@ public final class BestiaryUnlockService {
             return false;
         }
         CreatureInfoApi.getDangerRatingStats(living);
+        if (BestiaryInvestigationService.isHighRisk(living)) {
+            return false;
+        }
         ResourceLocation id = ForgeRegistries.ENTITY_TYPES.getKey(entity.getType());
         return tryUnlock(player, id);
     }

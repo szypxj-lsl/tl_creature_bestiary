@@ -5,7 +5,11 @@ import com.szypxj.tlcreaturebestiary.client.ClientBestiaryState;
 import com.szypxj.tlcreaturebestiary.client.DangerStarRenderer;
 import com.szypxj.tlcreaturebestiary.danger.DangerRating;
 import com.szypxj.tlcreaturebestiary.data.BestiaryEntryIndex;
+import com.szypxj.tlcreaturebestiary.data.BestiaryEntryProgress;
+import com.szypxj.tlcreaturebestiary.data.BestiaryInvestigationRules;
+import com.szypxj.tlcreaturebestiary.data.BestiaryInvestigationService;
 import com.szypxj.tlcreaturebestiary.info.DropInfo;
+import com.szypxj.tlcreaturebestiary.info.EcologicalNiche;
 import com.szypxj.tlcreaturebestiary.network.BestiaryNetwork;
 import com.szypxj.tldomesticatemorecreatures.api.creature.BaseStats;
 import com.szypxj.tldomesticatemorecreatures.api.creature.CreatureInfoApi;
@@ -15,7 +19,9 @@ import com.szypxj.tldomesticatemorecreatures.client.gui.theme.TdmcEditBox;
 import com.szypxj.tldomesticatemorecreatures.client.gui.theme.TdmcUiTheme;
 import com.szypxj.tldomesticatemorecreatures.spyglass.SpyglassRadarBaseline;
 import net.minecraft.Util;
+import net.minecraft.client.gui.Font;
 import net.minecraft.client.gui.GuiGraphics;
+import net.minecraft.client.gui.components.MultiLineEditBox;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
@@ -45,10 +51,18 @@ public final class BestiaryScreen extends Screen {
     private final List<BestiaryEntryRow> rows = new ArrayList<>();
     private List<ResourceLocation> allTypeIds = List.of();
     private TdmcEditBox searchBox;
+    private boolean editMode;
+    private TdmcButton editModeButton;
+    private TdmcEditBox speciesEditBox;
+    private ThemedMultiLineEditBox descriptionEditBox;
+    private TdmcButton saveNotesButton;
+    private ResourceLocation editorEntityTypeId;
     private ResourceLocation selectedId;
     private DetailTab activeTab = DetailTab.BASIC;
     private int scroll;
     private int detailScroll;
+    private int basicScrollPixels;
+    private int basicContentHeight;
     private int panelX;
     private int panelY;
     private int panelWidth;
@@ -81,6 +95,7 @@ public final class BestiaryScreen extends Screen {
         searchBox.setResponder(value -> {
             scroll = 0;
             rebuildRows(value);
+            onSelectionChanged();
         });
         addRenderableWidget(searchBox);
 
@@ -94,6 +109,7 @@ public final class BestiaryScreen extends Screen {
         ));
         addDetailTabs();
         rebuildRows("");
+        addInvestigationEditor();
         requestSelectedDetailIfNeeded();
     }
 
@@ -130,8 +146,166 @@ public final class BestiaryScreen extends Screen {
     }
 
     private void setActiveTab(DetailTab tab) {
+        if (editMode) {
+            activeTab = DetailTab.BASIC;
+            detailScroll = 0;
+            return;
+        }
         activeTab = tab == null ? DetailTab.BASIC : tab;
         detailScroll = 0;
+        basicScrollPixels = 0;
+        basicContentHeight = 0;
+    }
+
+    private void addInvestigationEditor() {
+        editModeButton = TdmcButton.create(
+                panelX + panelWidth - 160,
+                panelY + 4,
+                72,
+                20,
+                Component.translatable("gui.tl_creature_bestiary.investigation.edit"),
+                button -> toggleEditMode()
+        );
+        addRenderableWidget(editModeButton);
+
+        int editorX = detailX() + 10;
+        int editorWidth = Math.max(80, detailWidth() - 20);
+        int editorTop = detailContentY() + 40;
+        speciesEditBox = new TdmcEditBox(
+                font,
+                editorX,
+                editorTop,
+                editorWidth,
+                20,
+                Component.translatable("gui.tl_creature_bestiary.investigation.species")
+        );
+        speciesEditBox.setMaxLength(BestiaryInvestigationService.MAX_SPECIES_LENGTH);
+        addRenderableWidget(speciesEditBox);
+
+        int descriptionY = editorTop + 42;
+        int descriptionHeight = Math.max(58, detailY() + detailHeight() - descriptionY - 38);
+        descriptionEditBox = new ThemedMultiLineEditBox(
+                font,
+                editorX,
+                descriptionY,
+                editorWidth,
+                descriptionHeight,
+                Component.translatable("gui.tl_creature_bestiary.investigation.description"),
+                Component.translatable("gui.tl_creature_bestiary.investigation.description_placeholder")
+        );
+        descriptionEditBox.setCharacterLimit(BestiaryInvestigationService.MAX_DESCRIPTION_LENGTH);
+        addRenderableWidget(descriptionEditBox);
+
+        saveNotesButton = TdmcButton.create(
+                detailX() + detailWidth() - 82,
+                detailY() + detailHeight() - 28,
+                72,
+                20,
+                Component.translatable("gui.tl_creature_bestiary.investigation.save"),
+                button -> saveInvestigationNotes()
+        );
+        addRenderableWidget(saveNotesButton);
+        updateEditorVisibility(false);
+    }
+
+    private void toggleEditMode() {
+        if (!canEditSelected()) {
+            editMode = false;
+            updateEditorVisibility(false);
+            return;
+        }
+        editMode = !editMode;
+        activeTab = DetailTab.BASIC;
+        detailScroll = 0;
+        basicScrollPixels = 0;
+        basicContentHeight = 0;
+        updateEditorVisibility(editMode);
+    }
+
+    private void saveInvestigationNotes() {
+        if (!editMode || !canEditSelected() || selectedId == null) {
+            return;
+        }
+        BestiaryNetwork.saveNotes(selectedId, speciesEditBox.getValue(), descriptionEditBox.getValue());
+    }
+
+    private boolean canEditSelected() {
+        if (selectedId == null || !ClientBestiaryState.isUnlocked(selectedId)) {
+            return false;
+        }
+        EntityType<?> type = ForgeRegistries.ENTITY_TYPES.getValue(selectedId);
+        return BestiaryInvestigationRules.isHighRisk(type)
+                && ClientBestiaryState.progress(selectedId).observed();
+    }
+
+    private void updateEditorVisibility(boolean reloadValues) {
+        boolean editable = canEditSelected();
+        if (!editable) {
+            editMode = false;
+            editorEntityTypeId = null;
+        }
+        boolean showInputs = editable && editMode;
+        if (editModeButton != null) {
+            editModeButton.visible = editable;
+            editModeButton.active = editable;
+            editModeButton.setMessage(Component.translatable(editMode
+                    ? "gui.tl_creature_bestiary.investigation.edit_exit"
+                    : "gui.tl_creature_bestiary.investigation.edit"));
+        }
+        if (speciesEditBox != null) {
+            speciesEditBox.visible = showInputs;
+            speciesEditBox.active = showInputs;
+        }
+        if (descriptionEditBox != null) {
+            descriptionEditBox.visible = showInputs;
+            descriptionEditBox.active = showInputs;
+        }
+        if (saveNotesButton != null) {
+            saveNotesButton.visible = showInputs;
+            saveNotesButton.active = showInputs;
+        }
+        if (showInputs && (reloadValues || !selectedId.equals(editorEntityTypeId))) {
+            BestiaryEntryProgress progress = ClientBestiaryState.progress(selectedId);
+            speciesEditBox.setValue(progress.species());
+            descriptionEditBox.setValue(progress.description());
+            editorEntityTypeId = selectedId;
+        }
+    }
+
+    private void onSelectionChanged() {
+        detailScroll = 0;
+        basicScrollPixels = 0;
+        basicContentHeight = 0;
+        editMode = false;
+        editorEntityTypeId = null;
+        updateEditorVisibility(false);
+        requestSelectedDetailIfNeeded();
+    }
+
+    private void renderInvestigationEditorLabels(GuiGraphics graphics, BestiaryEntryProgress investigation) {
+        int editorX = detailX() + 10;
+        graphics.drawString(
+                font,
+                Component.translatable("gui.tl_creature_bestiary.investigation.species"),
+                editorX,
+                speciesEditBox.getY() - 11,
+                investigation.validSpecies() ? TdmcUiTheme.TEXT_ACCENT : TdmcUiTheme.TEXT_MUTED,
+                false
+        );
+        int descriptionLength = BestiaryEntryProgress.countNonWhitespace(descriptionEditBox.getValue());
+        boolean descriptionComplete = descriptionLength >= BestiaryEntryProgress.MIN_DESCRIPTION_NON_WHITESPACE;
+        graphics.drawString(
+                font,
+                Component.translatable(
+                        "gui.tl_creature_bestiary.investigation.description_requirement",
+                        descriptionLength,
+                        BestiaryEntryProgress.MIN_DESCRIPTION_NON_WHITESPACE
+                ),
+                editorX,
+                descriptionEditBox.getY() - 11,
+                descriptionComplete ? TdmcUiTheme.TEXT_ACCENT : TdmcUiTheme.TEXT_MUTED,
+                false
+        );
     }
 
     private void rebuildRows(String query) {
@@ -141,7 +315,10 @@ public final class BestiaryScreen extends Screen {
             if (type == null) {
                 continue;
             }
-            Component label = type.getDescription();
+            if (hideUndiscoveredHighRiskFromSearch(query, id, type)) {
+                continue;
+            }
+            Component label = displayLabelForRow(id, type);
             String searchable = label.getString() + " " + type.getDescriptionId();
             boolean unlocked = ClientBestiaryState.isUnlocked(id);
             if (BestiarySearchPolicy.matches(query, unlocked, searchable, id)) {
@@ -158,6 +335,26 @@ public final class BestiaryScreen extends Screen {
             selectedId = rows.get(0).entityTypeId();
         }
         clampListScroll();
+    }
+
+
+    private Component displayLabelForRow(ResourceLocation id, EntityType<?> type) {
+        if (type != null
+                && BestiaryInvestigationRules.isHighRisk(type)
+                && !ClientBestiaryState.progress(id).observed()) {
+            return Component.translatable("gui.tl_creature_bestiary.investigation.unknown");
+        }
+        return type == null
+                ? Component.translatable("gui.tl_creature_bestiary.investigation.unknown")
+                : type.getDescription();
+    }
+
+    private boolean hideUndiscoveredHighRiskFromSearch(String query, ResourceLocation id, EntityType<?> type) {
+        return query != null
+                && !query.trim().isEmpty()
+                && type != null
+                && BestiaryInvestigationRules.isHighRisk(type)
+                && !ClientBestiaryState.progress(id).observed();
     }
 
     private void requestSelectedDetailIfNeeded() {
@@ -238,19 +435,44 @@ public final class BestiaryScreen extends Screen {
             return;
         }
         boolean unlocked = ClientBestiaryState.isUnlocked(selectedId);
-        graphics.drawString(font, type.getDescription(), detailX() + 10, detailY() + 10, unlocked ? TdmcUiTheme.TEXT_PRIMARY : LOCKED_TEXT_COLOR, true);
+        boolean highRisk = BestiaryInvestigationRules.isHighRisk(type);
+        BestiaryEntryProgress investigation = highRisk ? ClientBestiaryState.progress(selectedId) : null;
+        Component displayName = highRisk && investigation != null && !investigation.observed()
+                ? Component.translatable("gui.tl_creature_bestiary.unknown")
+                : type.getDescription();
+        graphics.drawString(font, displayName, detailX() + 10, detailY() + 10, unlocked ? TdmcUiTheme.TEXT_PRIMARY : LOCKED_TEXT_COLOR, true);
         BaseStats displayStats = CreatureInfoApi.getBaseStats(type);
-        DangerStarRenderer.draw(graphics, font, detailX() + 10, detailY() + 26, DangerRating.fromBaseStats(displayStats));
+        if (!highRisk) {
+            DangerStarRenderer.draw(graphics, font, detailX() + 10, detailY() + 26, DangerRating.fromBaseStats(displayStats));
+        } else if (investigation != null && investigation.combatRecorded()) {
+            DangerStarRenderer.draw(graphics, font, detailX() + 10, detailY() + 26, BestiaryInvestigationRules.baseDangerStars(type));
+        } else {
+            graphics.drawString(
+                    font,
+                    Component.translatable("gui.tl_creature_bestiary.investigation.danger_unknown"),
+                    detailX() + 10,
+                    detailY() + 26,
+                    TdmcUiTheme.TEXT_MUTED,
+                    false
+            );
+        }
+        if (highRisk && investigation != null) {
+            renderInvestigationHeader(graphics, investigation);
+        }
 
         if (!unlocked) {
             graphics.drawString(
                     font,
                     Component.translatable("gui.tl_creature_bestiary.locked"),
                     detailX() + 10,
-                    detailContentY() + 10,
+                    detailDataY(investigation) + 10,
                     LOCKED_TEXT_COLOR,
                     true
             );
+            return;
+        }
+        if (editMode && investigation != null && canEditSelected()) {
+            renderInvestigationEditorLabels(graphics, investigation);
             return;
         }
         ClientBestiaryState.Detail detail = ClientBestiaryState.detail(selectedId);
@@ -259,20 +481,135 @@ public final class BestiaryScreen extends Screen {
                     font,
                     Component.translatable("gui.tl_creature_bestiary.loading"),
                     detailX() + 10,
-                    detailContentY() + 10,
+                    detailDataY(investigation) + 10,
                     TdmcUiTheme.TEXT_MUTED,
                     true
             );
             return;
         }
         switch (activeTab) {
-            case BASIC -> renderBasicTab(graphics, detail);
-            case DROPS -> renderDropsTab(graphics, detail);
-            case BIOMES -> renderBiomesTab(graphics, detail);
+            case BASIC -> renderBasicTab(graphics, detail, investigation);
+            case DROPS -> renderDropsTab(graphics, detail, investigation);
+            case BIOMES -> renderBiomesTab(graphics, detail, investigation);
         }
     }
 
-    private void renderBasicTab(GuiGraphics graphics, ClientBestiaryState.Detail detail) {
+    private void renderInvestigationHeader(GuiGraphics graphics, BestiaryEntryProgress investigation) {
+        Component status = Component.translatable(investigation.rewardClaimed()
+                ? "gui.tl_creature_bestiary.investigation.status.reward_claimed"
+                : investigation.completed()
+                ? "gui.tl_creature_bestiary.investigation.status.reward_pending"
+                : "gui.tl_creature_bestiary.investigation.status.in_progress");
+        Component summary = Component.translatable(
+                "gui.tl_creature_bestiary.investigation.summary",
+                investigation.completionPercent(),
+                status
+        );
+        graphics.drawString(
+                font,
+                summary,
+                detailX() + 10,
+                detailContentY() + 1,
+                TdmcUiTheme.TEXT_ACCENT,
+                true
+        );
+
+        boolean[] completed = {
+                investigation.observed(),
+                investigation.combatRecorded(),
+                investigation.tamingRecorded(),
+                investigation.validSpecies(),
+                investigation.validDescription()
+        };
+        String[] keys = {
+                "gui.tl_creature_bestiary.investigation.stage.observed",
+                "gui.tl_creature_bestiary.investigation.stage.combat",
+                "gui.tl_creature_bestiary.investigation.stage.taming",
+                "gui.tl_creature_bestiary.investigation.stage.species",
+                "gui.tl_creature_bestiary.investigation.stage.description"
+        };
+        int gap = 3;
+        int x = detailX() + 10;
+        int y = detailContentY() + 13;
+        int available = detailWidth() - 20;
+        int stageWidth = Math.max(1, (available - gap * 4) / 5);
+        for (int i = 0; i < keys.length; i++) {
+            int stageX = x + i * (stageWidth + gap);
+            graphics.fill(
+                    stageX,
+                    y,
+                    Math.min(detailX() + detailWidth() - 10, stageX + stageWidth),
+                    y + 10,
+                    completed[i] ? TdmcUiTheme.ROW_SELECTED : TdmcUiTheme.ROW_BACKGROUND
+            );
+            Component label = Component.translatable(keys[i]);
+            int labelX = stageX + Math.max(1, (stageWidth - font.width(label)) / 2);
+            graphics.drawString(
+                    font,
+                    label,
+                    labelX,
+                    y + 1,
+                    completed[i] ? TdmcUiTheme.TEXT_PRIMARY : TdmcUiTheme.TEXT_MUTED,
+                    false
+            );
+        }
+    }
+
+    private void renderBasicTab(
+            GuiGraphics graphics,
+            ClientBestiaryState.Detail detail,
+            BestiaryEntryProgress investigation
+    ) {
+        int viewportY = detailDataY(investigation);
+        int viewportHeight = detailDataHeight(investigation);
+        clampBasicScroll();
+        int contentTop = viewportY - basicScrollPixels;
+
+        graphics.enableScissor(
+                detailX() + 1,
+                viewportY,
+                detailX() + detailWidth() - 1,
+                viewportY + viewportHeight
+        );
+        basicContentHeight = renderBasicTabContent(graphics, detail, investigation, contentTop);
+        graphics.disableScissor();
+        clampBasicScroll();
+
+        if (basicContentHeight > viewportHeight) {
+            renderBasicScrollbar(graphics, viewportY, viewportHeight);
+        }
+    }
+
+    private int renderBasicTabContent(
+            GuiGraphics graphics,
+            ClientBestiaryState.Detail detail,
+            BestiaryEntryProgress investigation,
+            int startY
+    ) {
+        int cursorY = renderUnifiedBasicMetadata(graphics, detail, investigation, startY + 4);
+
+        if (investigation != null && !investigation.combatRecorded()) {
+            graphics.drawString(
+                    font,
+                    Component.translatable("gui.tl_creature_bestiary.investigation.locked.combat"),
+                    detailX() + 10,
+                    cursorY + 2,
+                    TdmcUiTheme.TEXT_MUTED,
+                    true
+            );
+            graphics.drawString(
+                    font,
+                    Component.translatable("gui.tl_creature_bestiary.investigation.locked.taming"),
+                    detailX() + 10,
+                    cursorY + 18,
+                    TdmcUiTheme.TEXT_MUTED,
+                    false
+            );
+            cursorY += 34;
+            return Math.max(1, cursorY - startY + 8);
+        }
+
+        int radarY = cursorY + 2;
         int power = SpyglassRadarBaseline.powerPercentile(detail.baseStats().attackDamage());
         int life = SpyglassRadarBaseline.lifePercentile(detail.baseStats().maxHealth());
         int speed = SpyglassRadarBaseline.speedPercentile(detail.baseStats().movementSpeed());
@@ -280,13 +617,27 @@ public final class BestiaryScreen extends Screen {
                 graphics,
                 font,
                 detailX() + 12,
-                detailContentY() + 2,
-                Math.max(100, detailWidth() - 24),
+                radarY,
+                Math.max(100, detailWidth() - 32),
                 power,
                 life,
                 speed
         );
-        int textY = detailContentY() + 112;
+        int textY = radarY + 110;
+
+        if (investigation != null && !investigation.tamingRecorded()) {
+            graphics.drawString(
+                    font,
+                    Component.translatable("gui.tl_creature_bestiary.investigation.locked.taming"),
+                    detailX() + 10,
+                    textY,
+                    TdmcUiTheme.TEXT_MUTED,
+                    true
+            );
+            textY += 14;
+            return Math.max(1, textY - startY + 8);
+        }
+
         graphics.drawString(
                 font,
                 Component.translatable(detail.tamingInfo().tameable()
@@ -310,18 +661,28 @@ public final class BestiaryScreen extends Screen {
             textY += 14;
         }
         if (!detail.tamingInfo().tameable()) {
-            return;
+            return Math.max(1, textY - startY + 8);
         }
-        graphics.drawString(font, Component.translatable("gui.tl_creature_bestiary.taming_foods"), detailX() + 10, textY, TdmcUiTheme.TEXT_ACCENT, true);
+
+        graphics.drawString(
+                font,
+                Component.translatable("gui.tl_creature_bestiary.taming_foods"),
+                detailX() + 10,
+                textY,
+                TdmcUiTheme.TEXT_ACCENT,
+                true
+        );
         textY += 12;
         int foodStartX = detailX() + 16;
-        int foodRight = detailX() + detailWidth() - 10;
+        int foodRight = detailScrollbarX() - 6;
         int foodCursorX = foodStartX;
         int foodRowY = textY;
         int foodGap = 12;
         for (TamingFoodInfo food : detail.tamingInfo().foods()) {
             Item item = ForgeRegistries.ITEMS.getValue(food.itemId());
-            Component itemName = item == null ? Component.translatable("gui.tl_creature_bestiary.unknown_item") : item.getDescription();
+            Component itemName = item == null
+                    ? Component.translatable("gui.tl_creature_bestiary.unknown_item")
+                    : item.getDescription();
             Component foodLine = food.configured()
                     ? Component.translatable("gui.tl_creature_bestiary.food_amount", itemName, food.amount())
                     : Component.translatable("gui.tl_creature_bestiary.food_unconfigured", itemName);
@@ -329,9 +690,6 @@ public final class BestiaryScreen extends Screen {
             if (foodCursorX > foodStartX && foodCursorX + foodWidth > foodRight) {
                 foodCursorX = foodStartX;
                 foodRowY += 11;
-            }
-            if (foodRowY > detailY() + detailHeight() - 12) {
-                break;
             }
             graphics.drawString(
                     font,
@@ -343,20 +701,207 @@ public final class BestiaryScreen extends Screen {
             );
             foodCursorX += foodWidth + foodGap;
         }
+        textY = foodRowY + 12;
+        return Math.max(1, textY - startY + 8);
     }
 
-    private void renderDropsTab(GuiGraphics graphics, ClientBestiaryState.Detail detail) {
-        List<DropInfo> drops = detail.drops();
-        if (drops.isEmpty()) {
-            graphics.drawString(font, Component.translatable("gui.tl_creature_bestiary.no_drops"), detailX() + 10, detailContentY() + 10, TdmcUiTheme.TEXT_MUTED, true);
+    private int renderUnifiedBasicMetadata(
+            GuiGraphics graphics,
+            ClientBestiaryState.Detail detail,
+            BestiaryEntryProgress investigation,
+            int startY
+    ) {
+        int cursorY = renderProfileDiet(graphics, detail, startY);
+
+        if (investigation != null) {
+            cursorY = renderInvestigationNotes(graphics, investigation, cursorY);
+        } else {
+            cursorY = renderAutomaticProfileNotes(graphics, detail, cursorY);
+        }
+
+        if (investigation == null || investigation.combatRecorded()) {
+            int stars = CreatureInfoApi.dangerStars(detail.baseStats());
+            EcologicalNiche niche = EcologicalNiche.fromDangerStars(stars);
+            graphics.drawString(
+                    font,
+                    Component.translatable(
+                            "gui.tl_creature_bestiary.investigation.ecological_niche",
+                            Component.translatable(niche.translationKey())
+                    ),
+                    detailX() + 10,
+                    cursorY + 2,
+                    TdmcUiTheme.TEXT_ACCENT,
+                    true
+            );
+            cursorY += 16;
+        }
+        return cursorY;
+    }
+
+    private int renderProfileDiet(
+            GuiGraphics graphics,
+            ClientBestiaryState.Detail detail,
+            int startY
+    ) {
+        Component diet = Component.translatable(detail.profile().diet().value().translationKey());
+        graphics.drawString(
+                font,
+                Component.translatable("gui.tl_creature_bestiary.profile.diet_value", diet),
+                detailX() + 10,
+                startY,
+                detail.profile().diet().value() == com.szypxj.tlcreaturebestiary.api.profile.BestiaryDiet.UNKNOWN
+                        ? TdmcUiTheme.TEXT_MUTED
+                        : TdmcUiTheme.TEXT_PRIMARY,
+                false
+        );
+        return startY + 12;
+    }
+
+    private int renderAutomaticProfileNotes(
+            GuiGraphics graphics,
+            ClientBestiaryState.Detail detail,
+            int startY
+    ) {
+        int x = detailX() + 10;
+        int maxWidth = Math.max(40, detailWidth() - 28);
+        graphics.drawString(
+                font,
+                Component.translatable(
+                        "gui.tl_creature_bestiary.investigation.species_value",
+                        detail.profile().species().value()
+                ),
+                x,
+                startY,
+                TdmcUiTheme.TEXT_PRIMARY,
+                false
+        );
+
+        List<net.minecraft.util.FormattedCharSequence> descriptionLines = font.split(
+                Component.translatable(
+                        "gui.tl_creature_bestiary.investigation.description_value",
+                        detail.profile().description().value()
+                ),
+                maxWidth
+        );
+        int y = startY + 12;
+        for (net.minecraft.util.FormattedCharSequence line : descriptionLines) {
+            graphics.drawString(
+                    font,
+                    line,
+                    x,
+                    y,
+                    TdmcUiTheme.TEXT_PRIMARY,
+                    false
+            );
+            y += 10;
+        }
+        return y + 2;
+    }
+
+    private void renderBasicScrollbar(GuiGraphics graphics, int y, int height) {
+        int x = detailScrollbarX();
+        graphics.fill(x, y, x + SCROLLBAR_WIDTH, y + height, TdmcUiTheme.SLIDER_TRACK);
+        TdmcUiTheme.outline(graphics, x, y, SCROLLBAR_WIDTH, height, TdmcUiTheme.BORDER);
+        int thumbHeight = basicScrollbarThumbHeight(height);
+        int thumbY = currentBasicThumbY();
+        graphics.fill(
+                x + 1,
+                thumbY + 1,
+                x + SCROLLBAR_WIDTH - 1,
+                thumbY + thumbHeight - 1,
+                TdmcUiTheme.SLIDER_THUMB
+        );
+        TdmcUiTheme.outline(graphics, x, thumbY, SCROLLBAR_WIDTH, thumbHeight, TdmcUiTheme.BORDER_HOVERED);
+    }
+
+    private int renderInvestigationNotes(
+            GuiGraphics graphics,
+            BestiaryEntryProgress investigation,
+            int startY
+    ) {
+        int x = detailX() + 10;
+        int maxWidth = Math.max(40, detailWidth() - 20);
+        Component notRecorded = Component.translatable("gui.tl_creature_bestiary.investigation.not_recorded");
+        Component speciesValue = investigation.validSpecies()
+                ? Component.literal(investigation.species())
+                : notRecorded;
+        graphics.drawString(
+                font,
+                Component.translatable("gui.tl_creature_bestiary.investigation.species_value", speciesValue),
+                x,
+                startY,
+                investigation.validSpecies() ? TdmcUiTheme.TEXT_PRIMARY : TdmcUiTheme.TEXT_MUTED,
+                false
+        );
+
+        boolean hasDescription = !investigation.description().isBlank();
+        Component descriptionValue = hasDescription
+                ? Component.literal(investigation.description())
+                : notRecorded;
+        List<net.minecraft.util.FormattedCharSequence> descriptionLines = font.split(
+                Component.translatable("gui.tl_creature_bestiary.investigation.description_value", descriptionValue),
+                maxWidth
+        );
+        int y = startY + 12;
+        int lines = descriptionLines.size();
+        for (int i = 0; i < lines; i++) {
+            graphics.drawString(
+                    font,
+                    descriptionLines.get(i),
+                    x,
+                    y,
+                    investigation.validDescription() ? TdmcUiTheme.TEXT_PRIMARY : TdmcUiTheme.TEXT_MUTED,
+                    false
+            );
+            y += 10;
+        }
+        if (hasDescription && !investigation.validDescription()) {
+            graphics.drawString(
+                    font,
+                    Component.translatable(
+                            "gui.tl_creature_bestiary.investigation.description_incomplete",
+                            investigation.descriptionNonWhitespaceLength(),
+                            BestiaryEntryProgress.MIN_DESCRIPTION_NON_WHITESPACE
+                    ),
+                    x,
+                    y,
+                    TdmcUiTheme.TEXT_MUTED,
+                    false
+            );
+            y += 10;
+        }
+        return y + 2;
+    }
+
+    private void renderDropsTab(
+            GuiGraphics graphics,
+            ClientBestiaryState.Detail detail,
+            BestiaryEntryProgress investigation
+    ) {
+        int contentY = detailDataY(investigation);
+        int contentHeight = detailDataHeight(investigation);
+        if (investigation != null && !investigation.combatRecorded()) {
+            graphics.drawString(
+                    font,
+                    Component.translatable("gui.tl_creature_bestiary.investigation.locked.drops_combat"),
+                    detailX() + 10,
+                    contentY + 10,
+                    TdmcUiTheme.TEXT_MUTED,
+                    true
+            );
             return;
         }
-        int visible = Math.max(1, detailContentHeight() / DROP_ROW_HEIGHT);
+        List<DropInfo> drops = detail.drops();
+        if (drops.isEmpty()) {
+            graphics.drawString(font, Component.translatable("gui.tl_creature_bestiary.no_drops"), detailX() + 10, contentY + 10, TdmcUiTheme.TEXT_MUTED, true);
+            return;
+        }
+        int visible = Math.max(1, contentHeight / DROP_ROW_HEIGHT);
         detailScroll = clamp(detailScroll, 0, Math.max(0, drops.size() - visible));
         int end = Math.min(drops.size(), detailScroll + visible);
         for (int i = detailScroll; i < end; i++) {
             DropInfo drop = drops.get(i);
-            int y = detailContentY() + (i - detailScroll) * DROP_ROW_HEIGHT;
+            int y = contentY + (i - detailScroll) * DROP_ROW_HEIGHT;
             Item item = ForgeRegistries.ITEMS.getValue(drop.itemId());
             if (item == null) {
                 continue;
@@ -374,7 +919,7 @@ public final class BestiaryScreen extends Screen {
                 graphics.drawString(font, flags, right - font.width(flags), y + 15, TdmcUiTheme.TEXT_MUTED, false);
             }
         }
-        renderScrollbar(graphics, detailScrollbarX(), detailContentY(), detailContentHeight(), visible, drops.size(), detailScroll);
+        renderScrollbar(graphics, detailScrollbarX(), contentY, contentHeight, visible, drops.size(), detailScroll);
     }
 
     private Component dropAmount(DropInfo drop) {
@@ -410,23 +955,40 @@ public final class BestiaryScreen extends Screen {
         return Component.empty();
     }
 
-    private void renderBiomesTab(GuiGraphics graphics, ClientBestiaryState.Detail detail) {
-        List<ResourceLocation> biomes = detail.biomeIds();
-        if (biomes.isEmpty()) {
-            graphics.drawString(font, Component.translatable("gui.tl_creature_bestiary.no_biomes"), detailX() + 10, detailContentY() + 10, TdmcUiTheme.TEXT_MUTED, true);
+    private void renderBiomesTab(
+            GuiGraphics graphics,
+            ClientBestiaryState.Detail detail,
+            BestiaryEntryProgress investigation
+    ) {
+        int contentY = detailDataY(investigation);
+        int contentHeight = detailDataHeight(investigation);
+        if (investigation != null && !investigation.observed()) {
+            graphics.drawString(
+                    font,
+                    Component.translatable("gui.tl_creature_bestiary.investigation.locked.observation"),
+                    detailX() + 10,
+                    contentY + 10,
+                    TdmcUiTheme.TEXT_MUTED,
+                    true
+            );
             return;
         }
-        int visible = Math.max(1, detailContentHeight() / BIOME_ROW_HEIGHT);
+        List<ResourceLocation> biomes = detail.biomeIds();
+        if (biomes.isEmpty()) {
+            graphics.drawString(font, Component.translatable("gui.tl_creature_bestiary.no_biomes"), detailX() + 10, contentY + 10, TdmcUiTheme.TEXT_MUTED, true);
+            return;
+        }
+        int visible = Math.max(1, contentHeight / BIOME_ROW_HEIGHT);
         detailScroll = clamp(detailScroll, 0, Math.max(0, biomes.size() - visible));
         int end = Math.min(biomes.size(), detailScroll + visible);
         for (int i = detailScroll; i < end; i++) {
             ResourceLocation id = biomes.get(i);
-            int y = detailContentY() + (i - detailScroll) * BIOME_ROW_HEIGHT;
+            int y = contentY + (i - detailScroll) * BIOME_ROW_HEIGHT;
             Component name = Component.translatable(Util.makeDescriptionId("biome", id));
             graphics.drawString(font, name, detailX() + 10, y + 3, TdmcUiTheme.TEXT_PRIMARY, true);
             graphics.drawString(font, id.toString(), detailX() + 10, y + 14, TdmcUiTheme.TEXT_MUTED, false);
         }
-        renderScrollbar(graphics, detailScrollbarX(), detailContentY(), detailContentHeight(), visible, biomes.size(), detailScroll);
+        renderScrollbar(graphics, detailScrollbarX(), contentY, contentHeight, visible, biomes.size(), detailScroll);
     }
 
     private void renderScrollbar(GuiGraphics graphics, int x, int y, int height, int visibleRows, int totalRows, int currentScroll) {
@@ -465,7 +1027,9 @@ public final class BestiaryScreen extends Screen {
             BestiaryEntryRow row = rows.get(index);
             selectedId = row.entityTypeId();
             detailScroll = 0;
-            requestSelectedDetailIfNeeded();
+            basicScrollPixels = 0;
+            basicContentHeight = 0;
+            onSelectionChanged();
             return true;
         }
         return false;
@@ -498,9 +1062,17 @@ public final class BestiaryScreen extends Screen {
             clampListScroll();
             return true;
         }
-        if (activeTab != DetailTab.BASIC && mouseX >= detailX() && mouseX < detailX() + detailWidth() && mouseY >= detailContentY() && mouseY < detailContentY() + detailContentHeight()) {
-            detailScroll += delta < 0.0D ? 1 : -1;
-            clampDetailScroll();
+        BestiaryEntryProgress investigation = selectedInvestigation();
+        int dataY = detailDataY(investigation);
+        int dataHeight = detailDataHeight(investigation);
+        if (mouseX >= detailX() && mouseX < detailX() + detailWidth() && mouseY >= dataY && mouseY < dataY + dataHeight) {
+            if (activeTab == DetailTab.BASIC) {
+                basicScrollPixels += delta < 0.0D ? 18 : -18;
+                clampBasicScroll();
+            } else {
+                detailScroll += delta < 0.0D ? 1 : -1;
+                clampDetailScroll();
+            }
             return true;
         }
         return super.mouseScrolled(mouseX, mouseY, delta);
@@ -515,11 +1087,35 @@ public final class BestiaryScreen extends Screen {
     }
 
     private void updateDetailScrollFromMouse(double mouseY) {
+        if (activeTab == DetailTab.BASIC) {
+            updateBasicScrollFromMouse(mouseY);
+            return;
+        }
         int total = detailItemCount();
         int visible = detailVisibleRows();
-        int thumbHeight = scrollbarThumbHeight(visible, total, detailContentHeight());
-        detailScroll = scrollFromMouse(mouseY, detailContentY(), detailContentHeight(), thumbHeight, visible, total);
+        BestiaryEntryProgress investigation = selectedInvestigation();
+        int dataY = detailDataY(investigation);
+        int dataHeight = detailDataHeight(investigation);
+        int thumbHeight = scrollbarThumbHeight(visible, total, dataHeight);
+        detailScroll = scrollFromMouse(mouseY, dataY, dataHeight, thumbHeight, visible, total);
         clampDetailScroll();
+    }
+
+    private void updateBasicScrollFromMouse(double mouseY) {
+        BestiaryEntryProgress investigation = selectedInvestigation();
+        int dataY = detailDataY(investigation);
+        int dataHeight = detailDataHeight(investigation);
+        int thumbHeight = basicScrollbarThumbHeight(dataHeight);
+        int maxTravel = Math.max(0, dataHeight - thumbHeight);
+        int thumbTop = (int) Math.round(mouseY) - scrollbarDragOffset;
+        int clampedTop = clamp(thumbTop, dataY, dataY + maxTravel);
+        int maxScroll = Math.max(0, basicContentHeight - dataHeight);
+        if (maxTravel <= 0 || maxScroll <= 0) {
+            basicScrollPixels = 0;
+            return;
+        }
+        basicScrollPixels = (int) Math.round(((clampedTop - dataY) / (double) maxTravel) * maxScroll);
+        clampBasicScroll();
     }
 
     private int scrollFromMouse(double mouseY, int y, int height, int thumbHeight, int visible, int total) {
@@ -539,10 +1135,28 @@ public final class BestiaryScreen extends Screen {
     }
 
     private int currentDetailThumbY() {
+        if (activeTab == DetailTab.BASIC) {
+            return currentBasicThumbY();
+        }
         int total = detailItemCount();
         int visible = detailVisibleRows();
-        int height = scrollbarThumbHeight(visible, total, detailContentHeight());
-        return scrollbarThumbY(detailContentY(), detailContentHeight(), height, visible, total, detailScroll);
+        BestiaryEntryProgress investigation = selectedInvestigation();
+        int dataY = detailDataY(investigation);
+        int dataHeight = detailDataHeight(investigation);
+        int height = scrollbarThumbHeight(visible, total, dataHeight);
+        return scrollbarThumbY(dataY, dataHeight, height, visible, total, detailScroll);
+    }
+
+    private int currentBasicThumbY() {
+        BestiaryEntryProgress investigation = selectedInvestigation();
+        int dataY = detailDataY(investigation);
+        int dataHeight = detailDataHeight(investigation);
+        int thumbHeight = basicScrollbarThumbHeight(dataHeight);
+        int maxScroll = Math.max(0, basicContentHeight - dataHeight);
+        int travel = Math.max(0, dataHeight - thumbHeight);
+        return dataY + (maxScroll == 0
+                ? 0
+                : (int) Math.round((basicScrollPixels / (double) maxScroll) * travel));
     }
 
     private boolean isOverListScrollbar(double mouseX, double mouseY) {
@@ -550,12 +1164,17 @@ public final class BestiaryScreen extends Screen {
     }
 
     private boolean isOverDetailScrollbar(double mouseX, double mouseY) {
-        return activeTab != DetailTab.BASIC
-                && detailItemCount() > detailVisibleRows()
+        BestiaryEntryProgress investigation = selectedInvestigation();
+        int dataY = detailDataY(investigation);
+        int dataHeight = detailDataHeight(investigation);
+        boolean scrollable = activeTab == DetailTab.BASIC
+                ? basicContentHeight > dataHeight
+                : detailItemCount() > detailVisibleRows();
+        return scrollable
                 && mouseX >= detailScrollbarX()
                 && mouseX < detailScrollbarX() + SCROLLBAR_WIDTH
-                && mouseY >= detailContentY()
-                && mouseY < detailContentY() + detailContentHeight();
+                && mouseY >= dataY
+                && mouseY < dataY + dataHeight;
     }
 
     private int scrollbarThumbHeight(int visibleRows, int totalRows, int height) {
@@ -573,13 +1192,38 @@ public final class BestiaryScreen extends Screen {
     }
 
     private void clampDetailScroll() {
+        if (activeTab == DetailTab.BASIC) {
+            clampBasicScroll();
+            return;
+        }
         detailScroll = clamp(detailScroll, 0, Math.max(0, detailItemCount() - detailVisibleRows()));
+    }
+
+    private void clampBasicScroll() {
+        int viewportHeight = detailDataHeight(selectedInvestigation());
+        basicScrollPixels = clamp(basicScrollPixels, 0, Math.max(0, basicContentHeight - viewportHeight));
+    }
+
+    private int basicScrollbarThumbHeight(int viewportHeight) {
+        if (basicContentHeight <= 0) {
+            return viewportHeight;
+        }
+        return Math.min(
+                viewportHeight,
+                Math.max(18, (int) Math.round((viewportHeight / (double) basicContentHeight) * viewportHeight))
+        );
     }
 
     private int detailItemCount() {
         ClientBestiaryState.Detail detail = selectedId == null ? null : ClientBestiaryState.detail(selectedId);
         if (detail == null) {
             return 0;
+        }
+        if (activeTab == DetailTab.DROPS) {
+            BestiaryEntryProgress investigation = selectedInvestigation();
+            if (investigation != null && !investigation.combatRecorded()) {
+                return 0;
+            }
         }
         return switch (activeTab) {
             case BASIC -> 0;
@@ -589,11 +1233,23 @@ public final class BestiaryScreen extends Screen {
     }
 
     private int detailVisibleRows() {
+        int dataHeight = detailDataHeight(selectedInvestigation());
         return switch (activeTab) {
             case BASIC -> 0;
-            case DROPS -> Math.max(1, detailContentHeight() / DROP_ROW_HEIGHT);
-            case BIOMES -> Math.max(1, detailContentHeight() / BIOME_ROW_HEIGHT);
+            case DROPS -> Math.max(1, dataHeight / DROP_ROW_HEIGHT);
+            case BIOMES -> Math.max(1, dataHeight / BIOME_ROW_HEIGHT);
         };
+    }
+
+    private BestiaryEntryProgress selectedInvestigation() {
+        if (selectedId == null) {
+            return null;
+        }
+        EntityType<?> type = ForgeRegistries.ENTITY_TYPES.getValue(selectedId);
+        if (!BestiaryInvestigationRules.isHighRisk(type)) {
+            return null;
+        }
+        return ClientBestiaryState.progress(selectedId);
     }
 
     private static int clamp(int value, int min, int max) {
@@ -660,6 +1316,14 @@ public final class BestiaryScreen extends Screen {
         return Math.max(1, detailY() + detailHeight() - detailContentY() - 8);
     }
 
+    private int detailDataY(BestiaryEntryProgress investigation) {
+        return detailContentY() + (investigation == null ? 0 : 28);
+    }
+
+    private int detailDataHeight(BestiaryEntryProgress investigation) {
+        return Math.max(1, detailY() + detailHeight() - detailDataY(investigation) - 8);
+    }
+
     private int detailScrollbarX() {
         return detailX() + detailWidth() - 12;
     }
@@ -674,6 +1338,32 @@ public final class BestiaryScreen extends Screen {
     @Override
     public boolean isPauseScreen() {
         return false;
+    }
+
+    private static final class ThemedMultiLineEditBox extends MultiLineEditBox {
+        private ThemedMultiLineEditBox(
+                Font font,
+                int x,
+                int y,
+                int width,
+                int height,
+                Component message,
+                Component placeholder
+        ) {
+            super(font, x, y, width, height, message, placeholder);
+        }
+
+        @Override
+        protected void renderBackground(GuiGraphics graphics) {
+            int background = isFocused() ? TdmcUiTheme.INPUT_FOCUSED : TdmcUiTheme.INPUT_BACKGROUND;
+            graphics.fill(getX(), getY(), getX() + getWidth(), getY() + getHeight(), background);
+        }
+
+        @Override
+        protected void renderBorder(GuiGraphics graphics, int x, int y, int width, int height) {
+            int border = isFocused() ? TdmcUiTheme.BORDER_HOVERED : TdmcUiTheme.BORDER;
+            TdmcUiTheme.outline(graphics, x, y, width, height, border);
+        }
     }
 
     private enum DetailTab {

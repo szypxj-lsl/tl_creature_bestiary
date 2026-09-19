@@ -3,6 +3,7 @@ package com.szypxj.tlcreaturebestiary.event;
 import com.mojang.brigadier.Command;
 import com.szypxj.tlcreaturebestiary.TlCreatureBestiary;
 import com.szypxj.tlcreaturebestiary.data.BestiaryData;
+import com.szypxj.tlcreaturebestiary.data.BestiaryInvestigationService;
 import com.szypxj.tlcreaturebestiary.data.BestiaryUnlockService;
 import com.szypxj.tlcreaturebestiary.info.LootInfoService;
 import com.szypxj.tlcreaturebestiary.info.SpawnBiomeInfoService;
@@ -13,10 +14,10 @@ import net.minecraft.commands.Commands;
 import net.minecraft.network.chat.Component;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerPlayer;
+import net.minecraft.world.InteractionHand;
 import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.entity.player.Player;
-import net.minecraft.world.InteractionHand;
 import net.minecraftforge.event.OnDatapackSyncEvent;
 import net.minecraftforge.event.RegisterCommandsEvent;
 import net.minecraftforge.event.entity.living.LivingDeathEvent;
@@ -100,12 +101,20 @@ public final class BestiaryServerEvents {
     }
 
     @SubscribeEvent
-    public static void onPlayerKilledByCreature(LivingDeathEvent event) {
-        if (!(event.getEntity() instanceof ServerPlayer player)) {
+    public static void onLivingDeath(LivingDeathEvent event) {
+        if (event.getEntity() instanceof ServerPlayer player) {
+            if (event.getSource().getEntity() instanceof LivingEntity killer) {
+                if (!BestiaryInvestigationService.recordCombat(player, killer)) {
+                    BestiaryUnlockService.tryUnlock(player, killer);
+                }
+            }
             return;
         }
-        if (event.getSource().getEntity() != null) {
-            BestiaryUnlockService.tryUnlock(player, event.getSource().getEntity());
+        LivingEntity target = event.getEntity();
+        if (event.getSource().getEntity() instanceof ServerPlayer player) {
+            if (!BestiaryInvestigationService.recordCombat(player, target)) {
+                BestiaryUnlockService.tryUnlock(player, target);
+            }
         }
     }
 
@@ -139,7 +148,6 @@ public final class BestiaryServerEvents {
         );
         return Command.SINGLE_SUCCESS;
     }
-
 
     private static void refreshDangerRatingData(MinecraftServer server) {
         CreatureInfoApi.refreshDangerRatingData();

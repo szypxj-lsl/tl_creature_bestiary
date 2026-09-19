@@ -1,10 +1,16 @@
 package com.szypxj.tlcreaturebestiary.network.packet;
 
+import com.szypxj.tlcreaturebestiary.api.profile.BestiaryProfile;
+import com.szypxj.tlcreaturebestiary.api.profile.BestiaryProfileContext;
 import com.szypxj.tlcreaturebestiary.data.BestiaryData;
+import com.szypxj.tlcreaturebestiary.data.BestiaryEntryProgress;
+import com.szypxj.tlcreaturebestiary.data.BestiaryInvestigationRules;
+import com.szypxj.tlcreaturebestiary.data.BestiaryInvestigationService;
 import com.szypxj.tlcreaturebestiary.info.DropInfo;
 import com.szypxj.tlcreaturebestiary.info.LootInfoService;
 import com.szypxj.tlcreaturebestiary.info.SpawnBiomeInfoService;
 import com.szypxj.tlcreaturebestiary.network.BestiaryNetwork;
+import com.szypxj.tlcreaturebestiary.profile.BestiaryProfileResolver;
 import com.szypxj.tldomesticatemorecreatures.api.creature.BaseStats;
 import com.szypxj.tldomesticatemorecreatures.api.creature.CreatureInfoApi;
 import com.szypxj.tldomesticatemorecreatures.api.creature.TamingInfo;
@@ -39,13 +45,63 @@ public record C2SBestiaryDetailRequest(ResourceLocation entityTypeId) {
             if (type == null || type == EntityType.PLAYER) {
                 return;
             }
-            BaseStats stats = CreatureInfoApi.getDangerRatingStats(type);
-            TamingInfo taming = CreatureInfoApi.getTamingInfo(sender.serverLevel(), type);
-            boolean rideable = CreatureInfoApi.isRideable(sender.serverLevel(), type);
-            List<DropInfo> drops = LootInfoService.describe(sender.serverLevel().getServer(), type);
-            List<ResourceLocation> biomes = SpawnBiomeInfoService.findNaturalSpawnBiomes(sender.serverLevel().getServer(), type);
-            BestiaryNetwork.sendDetail(sender, new S2CBestiaryDetail(id, stats, taming, rideable, drops, biomes));
+
+            if (!BestiaryInvestigationRules.isHighRisk(type)) {
+                sendFullDetail(sender, id, type);
+                return;
+            }
+
+            BestiaryEntryProgress progress = BestiaryInvestigationService.progress(sender, type);
+            BaseStats stats = progress.combatRecorded()
+                    ? CreatureInfoApi.getDangerRatingStats(type)
+                    : BaseStats.NONE;
+            TamingInfo taming = progress.tamingRecorded()
+                    ? CreatureInfoApi.getTamingInfo(sender.serverLevel(), type)
+                    : TamingInfo.NOT_TAMEABLE;
+            boolean rideable = progress.tamingRecorded()
+                    && CreatureInfoApi.isRideable(sender.serverLevel(), type);
+            List<DropInfo> drops = progress.combatRecorded()
+                    ? LootInfoService.describe(sender.serverLevel().getServer(), type)
+                    : List.of();
+            List<ResourceLocation> biomes = progress.observed()
+                    ? SpawnBiomeInfoService.findNaturalSpawnBiomes(sender.serverLevel().getServer(), type)
+                    : List.of();
+            BestiaryProfile profile = BestiaryProfileResolver.resolve(new BestiaryProfileContext(
+                    sender.serverLevel(),
+                    id,
+                    type,
+                    stats,
+                    taming,
+                    rideable,
+                    biomes,
+                    sender.getLanguage()
+            ));
+            if (!progress.observed()) {
+                profile = BestiaryProfile.unavailable();
+            } else {
+                profile = profile.redactPlayerAuthoredFields();
+            }
+            BestiaryNetwork.sendDetail(sender, new S2CBestiaryDetail(id, stats, taming, rideable, drops, biomes, profile));
         });
         context.setPacketHandled(true);
+    }
+
+    private static void sendFullDetail(ServerPlayer sender, ResourceLocation id, EntityType<?> type) {
+        BaseStats stats = CreatureInfoApi.getDangerRatingStats(type);
+        TamingInfo taming = CreatureInfoApi.getTamingInfo(sender.serverLevel(), type);
+        boolean rideable = CreatureInfoApi.isRideable(sender.serverLevel(), type);
+        List<DropInfo> drops = LootInfoService.describe(sender.serverLevel().getServer(), type);
+        List<ResourceLocation> biomes = SpawnBiomeInfoService.findNaturalSpawnBiomes(sender.serverLevel().getServer(), type);
+        BestiaryProfile profile = BestiaryProfileResolver.resolve(new BestiaryProfileContext(
+                sender.serverLevel(),
+                id,
+                type,
+                stats,
+                taming,
+                rideable,
+                biomes,
+                sender.getLanguage()
+        ));
+        BestiaryNetwork.sendDetail(sender, new S2CBestiaryDetail(id, stats, taming, rideable, drops, biomes, profile));
     }
 }
