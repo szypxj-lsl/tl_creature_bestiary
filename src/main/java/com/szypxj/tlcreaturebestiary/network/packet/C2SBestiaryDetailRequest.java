@@ -3,6 +3,7 @@ package com.szypxj.tlcreaturebestiary.network.packet;
 import com.szypxj.tlcreaturebestiary.api.profile.BestiaryProfile;
 import com.szypxj.tlcreaturebestiary.api.profile.BestiaryProfileContext;
 import com.szypxj.tlcreaturebestiary.data.BestiaryData;
+import com.szypxj.tlcreaturebestiary.data.BestiaryCanonicalization;
 import com.szypxj.tlcreaturebestiary.data.BestiaryEntryProgress;
 import com.szypxj.tlcreaturebestiary.data.BestiaryInvestigationRules;
 import com.szypxj.tlcreaturebestiary.data.BestiaryInvestigationService;
@@ -20,88 +21,31 @@ import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.entity.EntityType;
 import net.minecraftforge.network.NetworkEvent;
 import net.minecraftforge.registries.ForgeRegistries;
-
 import java.util.List;
 import java.util.function.Supplier;
 
 public record C2SBestiaryDetailRequest(ResourceLocation entityTypeId) {
-    public static void encode(C2SBestiaryDetailRequest packet, FriendlyByteBuf buffer) {
-        buffer.writeResourceLocation(packet.entityTypeId());
+    public static void encode(C2SBestiaryDetailRequest packet,FriendlyByteBuf buffer){ buffer.writeResourceLocation(packet.entityTypeId()); }
+    public static C2SBestiaryDetailRequest decode(FriendlyByteBuf buffer){ return new C2SBestiaryDetailRequest(buffer.readResourceLocation()); }
+    public static void handle(C2SBestiaryDetailRequest packet,Supplier<NetworkEvent.Context> contextSupplier){
+        NetworkEvent.Context context=contextSupplier.get(); context.enqueueWork(()->{
+            ServerPlayer sender=context.getSender(); ResourceLocation id=BestiaryCanonicalization.canonical(packet.entityTypeId()); if(sender==null||id==null||!BestiaryData.isUnlocked(sender,id))return;
+            EntityType<?> type=ForgeRegistries.ENTITY_TYPES.getValue(id); if(type==null||type==EntityType.PLAYER)return;
+            if(!BestiaryInvestigationRules.isHighRisk(type)){ sendFullDetail(sender,id,type); return; }
+            BestiaryEntryProgress progress=BestiaryInvestigationService.progress(sender,type);
+            BaseStats stats=progress.combatRecorded()?CreatureInfoApi.getDangerRatingStats(type):BaseStats.NONE;
+            TamingInfo taming=progress.tamingRecorded()?CreatureInfoApi.getDisplayTamingInfo(sender.serverLevel(),type):TamingInfo.NOT_TAMEABLE;
+            boolean rideable=progress.tamingRecorded()&&CreatureInfoApi.isRideable(sender.serverLevel(),type);
+            List<DropInfo> drops=progress.combatRecorded()?LootInfoService.describe(sender.serverLevel().getServer(),type):List.of();
+            List<ResourceLocation> biomes=progress.observed()?SpawnBiomeInfoService.findNaturalSpawnBiomes(sender.serverLevel().getServer(),type):List.of();
+            BestiaryProfile profile=BestiaryProfileResolver.resolve(new BestiaryProfileContext(sender.serverLevel(),id,type,stats,taming,rideable,biomes,sender.getLanguage()));
+            if(!progress.observed())profile=BestiaryProfile.unavailable(); else profile=profile.redactPlayerAuthoredFields();
+            BestiaryNetwork.sendDetail(sender,new S2CBestiaryDetail(id,stats,taming,rideable,drops,biomes,profile));
+        }); context.setPacketHandled(true);
     }
-
-    public static C2SBestiaryDetailRequest decode(FriendlyByteBuf buffer) {
-        return new C2SBestiaryDetailRequest(buffer.readResourceLocation());
-    }
-
-    public static void handle(C2SBestiaryDetailRequest packet, Supplier<NetworkEvent.Context> contextSupplier) {
-        NetworkEvent.Context context = contextSupplier.get();
-        context.enqueueWork(() -> {
-            ServerPlayer sender = context.getSender();
-            ResourceLocation id = packet.entityTypeId();
-            if (sender == null || id == null || !BestiaryData.isUnlocked(sender, id)) {
-                return;
-            }
-            EntityType<?> type = ForgeRegistries.ENTITY_TYPES.getValue(id);
-            if (type == null || type == EntityType.PLAYER) {
-                return;
-            }
-
-            if (!BestiaryInvestigationRules.isHighRisk(type)) {
-                sendFullDetail(sender, id, type);
-                return;
-            }
-
-            BestiaryEntryProgress progress = BestiaryInvestigationService.progress(sender, type);
-            BaseStats stats = progress.combatRecorded()
-                    ? CreatureInfoApi.getDangerRatingStats(type)
-                    : BaseStats.NONE;
-            TamingInfo taming = progress.tamingRecorded()
-                    ? CreatureInfoApi.getTamingInfo(sender.serverLevel(), type)
-                    : TamingInfo.NOT_TAMEABLE;
-            boolean rideable = progress.tamingRecorded()
-                    && CreatureInfoApi.isRideable(sender.serverLevel(), type);
-            List<DropInfo> drops = progress.combatRecorded()
-                    ? LootInfoService.describe(sender.serverLevel().getServer(), type)
-                    : List.of();
-            List<ResourceLocation> biomes = progress.observed()
-                    ? SpawnBiomeInfoService.findNaturalSpawnBiomes(sender.serverLevel().getServer(), type)
-                    : List.of();
-            BestiaryProfile profile = BestiaryProfileResolver.resolve(new BestiaryProfileContext(
-                    sender.serverLevel(),
-                    id,
-                    type,
-                    stats,
-                    taming,
-                    rideable,
-                    biomes,
-                    sender.getLanguage()
-            ));
-            if (!progress.observed()) {
-                profile = BestiaryProfile.unavailable();
-            } else {
-                profile = profile.redactPlayerAuthoredFields();
-            }
-            BestiaryNetwork.sendDetail(sender, new S2CBestiaryDetail(id, stats, taming, rideable, drops, biomes, profile));
-        });
-        context.setPacketHandled(true);
-    }
-
-    private static void sendFullDetail(ServerPlayer sender, ResourceLocation id, EntityType<?> type) {
-        BaseStats stats = CreatureInfoApi.getDangerRatingStats(type);
-        TamingInfo taming = CreatureInfoApi.getTamingInfo(sender.serverLevel(), type);
-        boolean rideable = CreatureInfoApi.isRideable(sender.serverLevel(), type);
-        List<DropInfo> drops = LootInfoService.describe(sender.serverLevel().getServer(), type);
-        List<ResourceLocation> biomes = SpawnBiomeInfoService.findNaturalSpawnBiomes(sender.serverLevel().getServer(), type);
-        BestiaryProfile profile = BestiaryProfileResolver.resolve(new BestiaryProfileContext(
-                sender.serverLevel(),
-                id,
-                type,
-                stats,
-                taming,
-                rideable,
-                biomes,
-                sender.getLanguage()
-        ));
-        BestiaryNetwork.sendDetail(sender, new S2CBestiaryDetail(id, stats, taming, rideable, drops, biomes, profile));
+    private static void sendFullDetail(ServerPlayer sender,ResourceLocation id,EntityType<?> type){
+        BaseStats stats=CreatureInfoApi.getDangerRatingStats(type); TamingInfo taming=CreatureInfoApi.getDisplayTamingInfo(sender.serverLevel(),type); boolean rideable=CreatureInfoApi.isRideable(sender.serverLevel(),type);
+        List<DropInfo> drops=LootInfoService.describe(sender.serverLevel().getServer(),type); List<ResourceLocation> biomes=SpawnBiomeInfoService.findNaturalSpawnBiomes(sender.serverLevel().getServer(),type);
+        BestiaryProfile profile=BestiaryProfileResolver.resolve(new BestiaryProfileContext(sender.serverLevel(),id,type,stats,taming,rideable,biomes,sender.getLanguage())); BestiaryNetwork.sendDetail(sender,new S2CBestiaryDetail(id,stats,taming,rideable,drops,biomes,profile));
     }
 }

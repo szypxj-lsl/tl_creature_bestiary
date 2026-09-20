@@ -1,6 +1,7 @@
 package com.szypxj.tlcreaturebestiary;
 
 import com.szypxj.tlcreaturebestiary.config.TCBConfig;
+import com.szypxj.tlcreaturebestiary.data.BestiaryCanonicalization;
 import com.szypxj.tlcreaturebestiary.data.BestiaryInvestigationService;
 import com.szypxj.tlcreaturebestiary.data.BestiaryUnlockService;
 import com.szypxj.tlcreaturebestiary.network.BestiaryNetwork;
@@ -19,10 +20,11 @@ public final class TlCreatureBestiary {
         BuiltinBestiaryProfiles.register();
         BestiaryNetwork.register();
         SpyglassInspectionApi.registerScanListener(MOD_ID + ":investigation", event -> {
+            var canonicalId = BestiaryCanonicalization.canonical(event.entityTypeId());
             if (BestiaryInvestigationService.isHighRisk(event.target())) {
-                BestiaryInvestigationService.recordObservation(event.player(), event.target(), event.entityTypeId());
+                BestiaryInvestigationService.recordObservation(event.player(), event.target(), canonicalId);
             } else {
-                BestiaryUnlockService.tryUnlock(event.player(), event.target());
+                BestiaryUnlockService.tryUnlock(event.player(), canonicalId);
             }
         });
     }

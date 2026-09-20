@@ -20,9 +20,11 @@ public final class BestiaryEntryIndex {
                 .filter(DefaultAttributes::hasSupplier)
                 .map(ForgeRegistries.ENTITY_TYPES::getKey)
                 .filter(java.util.Objects::nonNull)
+                .map(BestiaryCanonicalization::canonical)
+                .filter(java.util.Objects::nonNull)
                 .forEach(result::add);
         if (discovered != null) {
-            result.addAll(discovered);
+            discovered.stream().map(BestiaryCanonicalization::canonical).filter(java.util.Objects::nonNull).forEach(result::add);
         }
         result.removeIf(id -> {
             EntityType<?> type = ForgeRegistries.ENTITY_TYPES.getValue(id);

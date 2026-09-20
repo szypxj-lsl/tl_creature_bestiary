@@ -41,7 +41,7 @@ public final class FossilBestiaryProfileProvider implements BestiaryProfileProvi
         BestiaryProfileField<Component> species = species(info);
         BestiaryProfileField<BestiaryDiet> diet = diet(info);
         BestiaryProfileField<Component> description = officialLore(context)
-                .map(text -> new BestiaryProfileField<>(
+                .map(text -> new BestiaryProfileField<Component>(
                         Component.literal(text),
                         BestiaryProfileSource.MOD_COMPAT,
                         BestiaryProfileConfidence.AUTHORITATIVE
