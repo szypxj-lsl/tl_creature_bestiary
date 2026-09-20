@@ -93,5 +93,6 @@
   "gui.tl_creature_bestiary.profile.description.generic": "%1$s，危险度为 %2$s 星，生态位为%3$s。%4$s；已记录 %5$s 个自然生成群系。",
   "gui.tl_creature_bestiary.profile.description.generic_no_biomes": "%1$s，危险度为 %2$s 星，生态位为%3$s。%4$s。",
   "gui.tl_creature_bestiary.profile.species.dragon": "龙类",
-  "gui.tl_creature_bestiary.profile.species.sauropod": "蜥脚类"
+  "gui.tl_creature_bestiary.profile.species.sauropod": "蜥脚类",
+  "gui.tl_creature_bestiary.profile.species.dinosaur": "恐龙"
 }

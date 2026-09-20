@@ -93,5 +93,6 @@
   "gui.tl_creature_bestiary.profile.description.generic": "%1$s with a danger rating of %2$s stars and an ecological niche of %3$s. %4$s; %5$s natural spawn biomes are recorded.",
   "gui.tl_creature_bestiary.profile.description.generic_no_biomes": "%1$s with a danger rating of %2$s stars and an ecological niche of %3$s. %4$s.",
   "gui.tl_creature_bestiary.profile.species.dragon": "Dragon",
-  "gui.tl_creature_bestiary.profile.species.sauropod": "Sauropod"
+  "gui.tl_creature_bestiary.profile.species.sauropod": "Sauropod",
+  "gui.tl_creature_bestiary.profile.species.dinosaur": "Dinosaur"
 }
